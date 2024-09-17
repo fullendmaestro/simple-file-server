@@ -1,9 +1,11 @@
 use std::fmt::Display;
-use std::fs;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
+use mime_guess::mime; // Import for content type detection
 
-use super::request::{Version, HttpRequest};
+use super::request::Version;
+use super::request::HttpRequest;
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -26,40 +28,90 @@ impl HttpResponse {
 
         let server_root_path = std::env::current_dir()?;
         let resource = request.resource.path.clone();
-        let new_path = server_root_path.join(resource);
+        let new_path = server_root_path.join(&resource);
+
         if new_path.exists() {
             if new_path.is_file() {
-                let content = std::fs::read_to_string(&new_path)?;
-                content_length = content.len();
+                let mut file = File::open(&new_path)?;
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer)?;
+
+                content_length = buffer.len();
                 status = ResponseStatus::Ok;
                 accept_ranges = AcceptRanges::Bytes;
+
+                let content_type = mime_guess::from_path(&new_path).first_or_octet_stream();
+                let headers = format!(
+                    "Content-Type: {}\r\nContent-Length: {}\r\n{}\r\n",
+                    content_type,
+                    content_length,
+                    accept_ranges
+                );
+
+                response_body.push_str(&headers);
+                response_body.push_str(&String::from_utf8_lossy(&buffer));
+            } else if new_path.is_dir() {
+                status = ResponseStatus::Ok;
+                accept_ranges = AcceptRanges::None;
+                let mut links = String::new();
+
+                for entry in std::fs::read_dir(new_path)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let link = if path.is_dir() {
+                        format!("<li><a href=\"{}/\">{}/</a></li>", name, name)
+                    } else {
+                        format!("<li><a href=\"{}\">{}</a></li>", name, name)
+                    };
+                    links.push_str(&link);
+                }
+
                 let content = format!(
-                    "{} {}\r\n{}\r\nContent-Length: {}\r\n\r\n{}",
+                    "<!DOCTYPE html><html><body><h1>{}</h1><a href=\"../\">Go Back</a><ul>{}</ul></body></html>",
+                    current_path,
+                    links
+                );
+
+                content_length = content.len();
+                let headers = format!(
+                    "{} {}\r\n{}\r\nContent-Length: {}\r\n\r\n",
                     version,
                     status,
                     accept_ranges,
-                    content_length,
-                    content
+                    content_length
                 );
+                response_body.push_str(&headers);
                 response_body.push_str(&content);
             } else {
-                let four_o_four = "<html>
-                <body>
-                <h1>404 Not Found</h1>
-                </body>
-                </html>";
-                let content_length = four_o_four.len();
-                let content = format!(
-                    "{} {}\r\n{}\r\nContent-Length: {}\r\n\r\n{}",
+                status = ResponseStatus::NotFound;
+                let four_o_four = "<html><body><h1>404 Not Found</h1></body></html>";
+                content_length = four_o_four.len();
+                let headers = format!(
+                    "{} {}\r\n{}\r\nContent-Length: {}\r\n\r\n",
                     version,
                     status,
                     accept_ranges,
-                    content_length,
-                    four_o_four
+                    content_length
                 );
-                response_body.push_str(&content);
+                response_body.push_str(&headers);
+                response_body.push_str(four_o_four);
             }
+        } else {
+            status = ResponseStatus::NotFound;
+            let four_o_four = "<html><body><h1>404 Not Found</h1></body></html>";
+            content_length = four_o_four.len();
+            let headers = format!(
+                "{} {}\r\n{}\r\nContent-Length: {}\r\n\r\n",
+                version,
+                status,
+                accept_ranges,
+                content_length
+            );
+            response_body.push_str(&headers);
+            response_body.push_str(four_o_four);
         }
+
         Ok(HttpResponse {
             version,
             status,
