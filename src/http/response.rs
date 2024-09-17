@@ -1,8 +1,7 @@
-use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
-use mime_guess::mime; // Import for content type detection
+use mime_guess::mime;
 
 use super::request::Version;
 use super::request::HttpRequest;
@@ -129,7 +128,7 @@ enum ResponseStatus {
     NotFound = 404,
 }
 
-impl Display for ResponseStatus {
+impl std::fmt::Display for ResponseStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
             ResponseStatus::Ok => "200 OK",
@@ -145,7 +144,7 @@ enum AcceptRanges {
     None,
 }
 
-impl Display for AcceptRanges {
+impl std::fmt::Display for AcceptRanges {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
             AcceptRanges::Bytes => "Accept-Ranges: bytes",
