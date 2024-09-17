@@ -1,7 +1,10 @@
+use std::fs;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
-use mime_guess::mime;
+
+use infer::Infer;
+use mime_guess::MimeGuess;
 
 use super::request::Version;
 use super::request::HttpRequest;
@@ -31,24 +34,39 @@ impl HttpResponse {
 
         if new_path.exists() {
             if new_path.is_file() {
-                let mut file = File::open(&new_path)?;
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)?;
+                let file_content = fs::read(&new_path)?;
 
-                content_length = buffer.len();
-                status = ResponseStatus::Ok;
-                accept_ranges = AcceptRanges::Bytes;
+                // Determine the MIME type
+                let mime_type = Infer::new().get_from_path(&new_path)
+                    .ok()
+                    .flatten()
+                    .map(|kind| kind.mime_type())
+                    .unwrap_or_else(|| match new_path.extension().and_then(|ext| ext.to_str()) {
+                        Some("html") => "text/html",
+                        Some("css") => "text/css",
+                        Some("js") => "application/javascript",
+                        Some("png") => "image/png",
+                        Some("jpg") | Some("jpeg") => "image/jpeg",
+                        Some("mp4") => "video/mp4",
+                        Some("gif") => "image/gif",
+                        Some("pdf") => "application/pdf",
+                        Some("txt") | Some("gitignore") => "text/plain",
+                        Some("rs") => "text/rs",
+                        _ => "application/octet-stream", // Default MIME type
+                    });
 
-                let content_type = mime_guess::from_path(&new_path).first_or_octet_stream();
-                let headers = format!(
-                    "Content-Type: {}\r\nContent-Length: {}\r\n{}\r\n",
-                    content_type,
-                    content_length,
-                    accept_ranges
+                let response_header = format!(
+                    "{} {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nContent-Disposition: inline\r\n\r\n",
+                    version,
+                    ResponseStatus::Ok,
+                    file_content.len(),
+                    mime_type
                 );
 
-                response_body.push_str(&headers);
-                response_body.push_str(&String::from_utf8_lossy(&buffer));
+                response_body.push_str(&response_header);
+                // Convert file_content to UTF-8 and handle potential errors
+                response_body.push_str(&String::from_utf8(file_content)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?);
             } else if new_path.is_dir() {
                 status = ResponseStatus::Ok;
                 accept_ranges = AcceptRanges::None;
